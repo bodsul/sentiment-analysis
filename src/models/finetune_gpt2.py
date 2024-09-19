@@ -172,7 +172,7 @@ if __name__ == '__main__':
         in_features=BASE_CONFIG["emb_dim"],
         out_features=num_classes
     )
-
+    model=gpt.to(device)
     start_time = time.time()
     torch.manual_seed(123)
     optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5, weight_decay=0.1)
