@@ -1,6 +1,8 @@
 import os
 import time
 import sys
+from pathlib import Path
+
 sys.path.append('../src/dataset')
 from SentimentDataset import SentimentDataset, tokenizer, collate_fn
 from .gpt2_download_hf import load_gpt2_from_hf, BASE_CONFIG
@@ -185,3 +187,16 @@ if __name__ == '__main__':
     end_time = time.time()
     execution_time_minutes = (end_time - start_time) / 60
     print(f"Training completed in {execution_time_minutes:.2f} minutes.")
+
+    test_accuracy = calc_accuracy_loader(test_loader, model, device)
+
+    print(f"Test accuracy: {test_accuracy*100:.2f}%")
+
+    save_checkpoint = True
+    
+    if save_checkpoint:
+        dir_checkpoint = '../checkpoints'
+        Path(dir_checkpoint).mkdir(parents=True, exist_ok=True)
+        torch.save(state_dict, str(dir_checkpoint / 'checkpoint_epoch{}.pth'.format(epoch)))
+        print(f'Checkpoint saved!')
+
