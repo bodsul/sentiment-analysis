@@ -59,6 +59,9 @@ class SentimentDataset(Dataset):
             except TypeError:
                 bad_indices.append(i)
                 continue
+            if df.loc[i]['sentiment'] not in {0, 1, 2}:
+                bad_indices.append(i)
+                
         print(f'Bad Indices: {len(bad_indices)} out of {len(self.df)}')
         self.df.drop(bad_indices)
 
