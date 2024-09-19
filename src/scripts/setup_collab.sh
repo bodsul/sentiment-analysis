@@ -1,6 +1,6 @@
 #!/bin/bash
 
-git clone https://$1@github.com/bodsul/sentiment-analysis.git
+# git clone https://$1@github.com/bodsul/sentiment-analysis.git
 
 mkdir -p sentiment-analysis/data/sentiment_analysis
 
