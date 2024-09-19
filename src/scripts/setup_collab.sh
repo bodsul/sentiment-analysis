@@ -7,3 +7,5 @@ mkdir -p sentiment-analysis/data/sentiment_analysis
 gsutil cp gs://bode-datasets/archive.zip .
 
 unzip archive.zip -d sentiment-analysis/data/sentiment_analysis
+
+pip install numpy matplotlib scikit-learn pandas nltk tiktoken torch transformers
