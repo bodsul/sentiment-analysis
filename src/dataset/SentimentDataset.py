@@ -1,6 +1,7 @@
 from torch.utils.data import Dataset
 import torch
 import pandas as pd
+import numpy as np
 import os
 
 import tiktoken
@@ -27,7 +28,7 @@ class SentimentDataset(Dataset):
             self.split = split
     
         df = pd.read_csv(os.path.join(data_dir, f'{self.split}.csv'), encoding='unicode_escape')[['text', 'sentiment']]
-        
+        df = df.dropna()
         if split=='train' or split=='validation':
             df = df.sample(frac=1, random_state=123).reset_index(drop=True)
 
@@ -37,31 +38,33 @@ class SentimentDataset(Dataset):
 
             if split=='train':
                 df_negative=df_negative[:int(len(df_negative)*TRAIN_SPLIT_FROM_TRAIN)]
-                df_neutral=df_negative[:int(len(df_neutral)*TRAIN_SPLIT_FROM_TRAIN)]
+                df_neutral=df_neutral[:int(len(df_neutral)*TRAIN_SPLIT_FROM_TRAIN)]
                 df_positive=df_positive[:int(len(df_positive)*TRAIN_SPLIT_FROM_TRAIN)]
             else:
                 df_negative=df_negative[int(len(df_negative)*TRAIN_SPLIT_FROM_TRAIN):]
-                df_neutral=df_negative[int(len(df_neutral)*TRAIN_SPLIT_FROM_TRAIN):]
+                df_neutral=df_neutral[int(len(df_neutral)*TRAIN_SPLIT_FROM_TRAIN):]
                 df_positive=df_positive[int(len(df_positive)*TRAIN_SPLIT_FROM_TRAIN):]
 
             df = pd.concat([df_negative, df_neutral, df_positive])
         
         df = df.sample(frac=1, random_state=123).reset_index(drop=True)
+        print(set(df['sentiment']))
         df['sentiment'] = df['sentiment'].map({"negative": 0, "neutral": 1, "positive": 2})
-
+        print(set(df['sentiment']))
         self.df = df
         self.encoded_texts = []
         bad_indices = []
 
-        for i in range(len(df)):
+        for i in range(len(self.df)):
+            if self.df.iloc[i]['sentiment']==np.nan or self.df.iloc[i]['sentiment'] not in {0, 1, 2}:
+                bad_indices.append(i)
+                continue
             try:
                 self.encoded_texts.append(tokenizer.encode(df.loc[i]['text']))
             except TypeError:
                 bad_indices.append(i)
                 continue
-            if df.loc[i]['sentiment'] not in {0, 1, 2}:
-                bad_indices.append(i)
-                
+    
         print(f'Bad Indices: {len(bad_indices)} out of {len(self.df)}')
         self.df.drop(bad_indices)
 
@@ -85,10 +88,14 @@ class SentimentDataset(Dataset):
     def __getitem__(self, index):
         encoded = self.encoded_texts[index]
         label = self.df.iloc[index]["sentiment"]
-        return (
-            torch.tensor(encoded, dtype=torch.long),
-            torch.tensor(label, dtype=torch.long)
-    )
+        try:
+            return (
+                torch.tensor(encoded, dtype=torch.long),
+                torch.tensor(label, dtype=torch.long)
+        )
+        except:
+            print(f'label: {label}')
+            raise
 
     def __len__(self):
         return len(self.df)

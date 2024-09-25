@@ -178,7 +178,7 @@ if __name__ == '__main__':
     start_time = time.time()
     torch.manual_seed(123)
     optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5, weight_decay=0.1)
-    num_epochs = 5
+    num_epochs = 1
     train_losses, val_losses, train_accs, val_accs, examples_seen = train_classifier_simple(
     model, train_loader, val_loader, optimizer, device,
     num_epochs=num_epochs, eval_freq=50, eval_iter=5,
@@ -197,6 +197,6 @@ if __name__ == '__main__':
     if save_checkpoint:
         dir_checkpoint = '../checkpoints'
         Path(dir_checkpoint).mkdir(parents=True, exist_ok=True)
-        torch.save(state_dict, str(dir_checkpoint / 'checkpoint_epoch{}.pth'.format(epoch)))
+        torch.save(model.state_dict, f'{dir_checkpoint}/checkpoint_epoch{num_epochs}.pth')
         print(f'Checkpoint saved!')
 
