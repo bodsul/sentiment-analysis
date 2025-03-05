@@ -9,6 +9,22 @@ from .gpt2_download_hf import load_gpt2_from_hf, BASE_CONFIG
 
 from torch.utils.data import DataLoader
 import torch
+
+from torch.profiler import profile, record_function, ProfilerActivity
+
+
+import gc
+
+def before_gc(phase, info):
+    print(f"..............Garbage collection started: {phase}")
+
+def after_gc(phase, info):
+    print(f".............Garbage collection finished: {phase}")
+    print(f".............Collected {info['collected']} objects")
+
+gc.set_debug(gc.DEBUG_COLLECTABLE)
+gc.callbacks.append(before_gc)
+gc.callbacks.append(after_gc)
 import matplotlib.pyplot as plt
 
 def calc_accuracy_loader(data_loader, model, device, num_batches=None):
@@ -36,7 +52,8 @@ def calc_accuracy_loader(data_loader, model, device, num_batches=None):
 
 def calc_loss_batch(input_batch, target_batch, model, device):
     input_batch, target_batch = input_batch.to(device), target_batch.to(device)
-    logits = model(input_batch)[:, -1, :]  # Logits of last output token
+    with record_function('forward_pass'):
+        logits = model(input_batch)[:, -1, :]  # Logits of last output token
     loss = torch.nn.functional.cross_entropy(logits, target_batch)
     return loss
 
@@ -68,40 +85,42 @@ def evaluate_model(model, train_loader, val_loader, device, eval_iter):
 
 
 def train_classifier_simple(model, train_loader, val_loader, optimizer, device, num_epochs,
-                            eval_freq, eval_iter, tokenizer):
+                            eval_freq, eval_iter, tokenizer, profiler_kwargs):
     # Initialize lists to track losses and tokens seen
     train_losses, val_losses, train_accs, val_accs = [], [], [], []
     examples_seen, global_step = 0, -1
 
+    with profile(**profiler_kwargs) as p:
     # Main training loop
-    for epoch in range(num_epochs):
-        model.train()  # Set model to training mode
+        for epoch in range(num_epochs):
+            model.train()  # Set model to training mode
 
-        for input_batch, target_batch in train_loader:
-            optimizer.zero_grad()  # Reset loss gradients from previous batch iteration
-            loss = calc_loss_batch(input_batch, target_batch, model, device)
-            loss.backward()  # Calculate loss gradients
-            optimizer.step()  # Update model weights using loss gradients
-            examples_seen += input_batch.shape[0]  # New: track examples instead of tokens
-            global_step += 1
+            for input_batch, target_batch in train_loader:
+                optimizer.zero_grad()  # Reset loss gradients from previous batch iteration
+                loss = calc_loss_batch(input_batch, target_batch, model, device)
+                loss.backward()  # Calculate loss gradients
+                with record_function('optimizer_step'):
+                    optimizer.step()  # Update model weights using loss gradients
+                examples_seen += input_batch.shape[0]  # New: track examples instead of tokens
+                global_step += 1
 
-            # Optional evaluation step
-            if global_step % eval_freq == 0:
-                train_loss, val_loss = evaluate_model(
-                    model, train_loader, val_loader, device, eval_iter)
-                train_losses.append(train_loss)
-                val_losses.append(val_loss)
-                print(f"Ep {epoch+1} (Step {global_step:06d}): "
-                      f"Train loss {train_loss:.3f}, Val loss {val_loss:.3f}")
+                # Optional evaluation step
+                if global_step % eval_freq == 0:
+                    train_loss, val_loss = evaluate_model(
+                        model, train_loader, val_loader, device, eval_iter)
+                    train_losses.append(train_loss)
+                    val_losses.append(val_loss)
+                    print(f"Ep {epoch+1} (Step {global_step:06d}): "
+                        f"Train loss {train_loss:.3f}, Val loss {val_loss:.3f}")
+                p.step()
 
-        # Calculate accuracy after each epoch
-        train_accuracy = calc_accuracy_loader(train_loader, model, device, num_batches=eval_iter)
-        val_accuracy = calc_accuracy_loader(val_loader, model, device, num_batches=eval_iter)
-        print(f"Training accuracy: {train_accuracy*100:.2f}% | ", end="")
-        print(f"Validation accuracy: {val_accuracy*100:.2f}%")
-        train_accs.append(train_accuracy)
-        val_accs.append(val_accuracy)
-
+            # Calculate accuracy after each epoch
+            train_accuracy = calc_accuracy_loader(train_loader, model, device, num_batches=eval_iter)
+            val_accuracy = calc_accuracy_loader(val_loader, model, device, num_batches=eval_iter)
+            print(f"Training accuracy: {train_accuracy*100:.2f}% | ", end="")
+            print(f"Validation accuracy: {val_accuracy*100:.2f}%")
+            train_accs.append(train_accuracy)
+            val_accs.append(val_accuracy)
     return train_losses, val_losses, train_accs, val_accs, examples_seen
 
 
@@ -130,7 +149,7 @@ if __name__ == '__main__':
     test_dataset = SentimentDataset('test', tokenizer)
 
     num_workers = os.cpu_count()-1
-    batch_size = 8
+    batch_size = 16
     torch.manual_seed(123)
 
     train_loader = DataLoader(
@@ -179,10 +198,47 @@ if __name__ == '__main__':
     torch.manual_seed(123)
     optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5, weight_decay=0.1)
     num_epochs = 1
+
+    def trace_handler(p):
+        AVAILABLE_SORT_KEYS = [
+            "cpu_time",
+            "cuda_time",
+            "cpu_time_total",
+            "cuda_time_total",
+            "cpu_memory_usage",
+            "cuda_memory_usage",
+            "self_cpu_memory_usage",
+            "self_cuda_memory_usage",
+            "count",
+        ]
+        output = p.key_averages().table(sort_by="self_cuda_time_total", row_limit=10)
+        print(output)
+        out_path = "./profiler/trace_" + str(p.step_num) + ".json"
+        # out_mem_path = "./profiler/mem_" + str(p.step_num) + ".json"
+        p.export_chrome_trace(out_path)
+        # p.export_memory_timeline(out_mem_path)
+
+    perf_dir =  Path("./profiler")
+    perf_dir.mkdir(exist_ok=True, parents=True)
+    profiler_kwargs = {
+        "activities": [ProfilerActivity.CPU, ProfilerActivity.CUDA] if torch.cuda.is_available() else [ProfilerActivity.CPU],
+        "schedule": torch.profiler.schedule(
+        wait=1,
+        warmup=1,
+        active=5, 
+        repeat=10,
+        skip_first=True),
+        "profile_memory":True,
+        "record_shapes": True,
+        "with_flops":True,
+        "with_modules":True,
+        # "on_trace_ready": trace_handler,
+        "on_trace_ready": torch.profiler.tensorboard_trace_handler('./profiler'),
+    }
     train_losses, val_losses, train_accs, val_accs, examples_seen = train_classifier_simple(
     model, train_loader, val_loader, optimizer, device,
     num_epochs=num_epochs, eval_freq=50, eval_iter=5,
-    tokenizer=tokenizer
+    tokenizer=tokenizer, profiler_kwargs=profiler_kwargs
     )
     end_time = time.time()
     execution_time_minutes = (end_time - start_time) / 60
